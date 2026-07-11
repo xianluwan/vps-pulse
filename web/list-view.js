@@ -40,7 +40,7 @@
     $('cards').innerHTML = data.map(v => `<article class="server-row">
       <div class="server-title"><span class="dot ${v.online?'on':''}"></span><div><b>${clean(v.name)}</b><small>${clean(v.IPv4||v.ipv4||'等待 IP')}</small></div></div>
       <div class="server-cell"><small>实时速率</small><strong class="down">↓ ${fmtSpeed(v.RxBPS||0)}</strong><strong class="up">↑ ${fmtSpeed(v.TxBPS||0)}</strong></div>
-      <div class="server-cell"><small>流量</small><span>今日 ${fmtBytes(v.dayBytes||0)}</span><span>本月 ${fmtBytes(v.monthBytes||0)}</span><span>累计 ${fmtBytes(v.totalBytes||0)}</span></div>
+      <div class="server-cell"><small>流量</small><span>今日 ${fmtBytes(v.DayBytes??v.dayBytes??0)}</span><span>本月 ${fmtBytes(v.MonthBytes??v.monthBytes??0)}</span><span>累计 ${fmtBytes(v.TotalBytes??v.totalBytes??0)}</span></div>
       <div class="server-cell resource"><small>CPU</small>${meter(v.CPU,'cpu')}</div>
       <div class="server-cell resource"><small>内存</small>${meter(v.Memory)}</div>
       <div class="server-cell resource"><small>存储</small>${meter(v.Disk)}</div>
