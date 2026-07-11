@@ -49,7 +49,24 @@
       uninstall.textContent = '复制卸载 Agent';
       uninstall.onclick = () => copy(uninstallCommand, uninstall);
 
-      actions.append(install, uninstall);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ghost agent-delete';
+      remove.textContent = '删除 VPS';
+      remove.style.color = '#ff7b86';
+      remove.onclick = async () => {
+        if (!confirm('确定从面板删除这台 VPS 吗？\n\n此操作会删除它的流量统计和事件记录，但不会卸载远端 Agent。建议先复制并执行卸载命令。')) return;
+        try {
+          await api(`/api/vps/${id}`, { method: 'DELETE' });
+          localStorage.removeItem(`vpspulse:install:${id}`);
+          data = await api('/api/vps');
+          render();
+        } catch (error) {
+          alert(`删除失败：${error.message}`);
+        }
+      };
+
+      actions.append(install, uninstall, remove);
     });
   }
 
