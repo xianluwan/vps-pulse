@@ -102,8 +102,10 @@ func (a *agent) monitorConnectivity(){
 		target,_,enabled:=a.cfg.get()
 		if !enabled{failures=0;time.Sleep(30*time.Second);continue}
 		if target==""{time.Sleep(30*time.Second);continue}
+		a.event("ping_check_started","开始自动检测连通性: "+target,"")
 		if reachable(target){
 			if failures>0{a.event("ping_recovered","连通性已恢复: "+target,"")}
+			a.event("ping_ok","自动 Ping 成功，下次检测将在 5 分钟后进行: "+target,"")
 			failures=0;time.Sleep(5*time.Minute);continue
 		}
 		failures++
