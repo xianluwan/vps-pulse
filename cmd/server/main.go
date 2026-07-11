@@ -75,6 +75,7 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 	_,_=a.db.Exec(`ALTER TABLE vps ADD COLUMN auto_recovery INTEGER DEFAULT 0`)
 	_,e:=a.db.Exec(`UPDATE vps SET name=?,billing_day=?,day_limit=?,month_limit=?,ping_target=?,change_cmd=?,auto_recovery=?,cf_zone=?,cf_record=?,cf_name=?,cf_token=CASE WHEN ?='' THEN cf_token ELSE ? END WHERE id=?`,v.Name,v.BillingDay,v.DayLimit,v.MonthLimit,v.PingTarget,v.ChangeIPCommand,v.AutoRecovery,v.CFZoneID,v.CFRecordID,v.CFRecordName,v.CFToken,v.CFToken,id)
 	if e!=nil{http.Error(w,e.Error(),500);return}
+	a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"settings_updated",fmt.Sprintf("服务器设置已保存；自动恢复=%t；Ping目标=%s",v.AutoRecovery,v.PingTarget))
 	a.mu.RLock();c:=a.agents[id];a.mu.RUnlock();if c!=nil{c.WriteJSON(map[string]any{"type":"config","pingTarget":v.PingTarget,"changeIpCommand":v.ChangeIPCommand,"autoRecovery":v.AutoRecovery})};write(w,map[string]bool{"ok":true})
 }
 func(a *App)agent(w http.ResponseWriter,r *http.Request){
