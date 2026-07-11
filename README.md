@@ -24,8 +24,8 @@ docker compose up -d --build
 
 ## 更新
 
+```bash
 cd /opt/vps-pulse
-
 git pull
-
 docker compose up -d --build
+```
