@@ -24,6 +24,7 @@ func main(){db,e:=sql.Open("sqlite",env("DATABASE_PATH","panel.db"));if e!=nil{l
 func(a *App)login(w http.ResponseWriter,r *http.Request){var x struct{Password string `json:"password"`};json.NewDecoder(r.Body).Decode(&x);if x.Password!=a.password{http.Error(w,"密码错误",401);return};http.SetCookie(w,&http.Cookie{Name:"session",Value:a.password,Path:"/",HttpOnly:true,SameSite:http.SameSiteStrictMode,MaxAge:604800});write(w,map[string]bool{"ok":true})}
 func(a *App)auth(n http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){c,e:=r.Cookie("session");if e!=nil||c.Value!=a.password{http.Error(w,"unauthorized",401);return};n(w,r)}}
 func(a *App)vps(w http.ResponseWriter,r *http.Request){
+	a.startTelegramBot()
 	_,_=a.db.Exec(`ALTER TABLE vps ADD COLUMN auto_recovery INTEGER DEFAULT 0`)
 	if r.Method=="POST"{
 		var v VPS;json.NewDecoder(r.Body).Decode(&v);v.ID=tok(6);v.Token=tok(24);if v.BillingDay==0{v.BillingDay=1}
