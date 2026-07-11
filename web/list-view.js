@@ -60,4 +60,12 @@
     settings.onclick=()=>alert('Telegram 设置正在接入，完成后将在这里配置。'); headerActions.appendChild(settings);
   }
   render();
+  // 实时速率由 WebSocket 每秒更新；持久化的日/月/累计流量定期从服务端校准。
+  setInterval(async () => {
+    try {
+      const fresh = await api('/api/vps');
+      data = fresh;
+      render();
+    } catch (_) {}
+  }, 5000);
 })();
