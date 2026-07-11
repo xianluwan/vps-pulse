@@ -29,3 +29,13 @@ cd /opt/vps-pulse
 git pull
 docker compose up -d --build
 ```
+
+
+cd /opt/vps-pulse
+
+```bash
+git stash push -m "server index backup" -- web/index.html
+git pull origin main
+docker compose up -d --build
+```
+
