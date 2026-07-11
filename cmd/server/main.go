@@ -58,13 +58,17 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 	}
 	if len(p)>1{
 		if p[1]=="dns"{
+			a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"action_dns","面板手动请求更新 Cloudflare DNS")
 			if e:=a.updateCloudflareDNS(id);e!=nil{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"dns_failed",e.Error());http.Error(w,e.Error(),502);return}
 			a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"dns_updated","Cloudflare A 记录更新成功")
 			write(w,map[string]bool{"ok":true});return
 		}
+		actionNames:=map[string]string{"ping":"立即 Ping","changeip":"手动换 IP","reboot":"重启 VPS"};actionName:=actionNames[p[1]];if actionName==""{actionName=p[1]}
+		a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"action_"+p[1],"面板请求执行："+actionName)
 		a.mu.RLock();c:=a.agents[id];a.mu.RUnlock()
-		if c==nil{http.Error(w,"Agent 离线",409);return}
-		c.WriteJSON(map[string]any{"type":"action","action":p[1]});write(w,map[string]bool{"ok":true});return
+		if c==nil{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"action_failed",actionName+"失败：Agent 离线");http.Error(w,"Agent 离线",409);return}
+		if e:=c.WriteJSON(map[string]any{"type":"action","action":p[1]});e!=nil{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"action_failed",actionName+"发送失败："+e.Error());http.Error(w,e.Error(),500);return}
+		write(w,map[string]bool{"ok":true});return
 	}
 	if r.Method!="PUT"{http.Error(w,"method",405);return}
 	var v VPS;json.NewDecoder(r.Body).Decode(&v)
@@ -79,8 +83,9 @@ func(a *App)agent(w http.ResponseWriter,r *http.Request){
 	e:=a.db.QueryRow(`SELECT id,billing_day,ping_target,change_cmd,auto_recovery FROM vps WHERE token=?`,r.URL.Query().Get("token")).Scan(&id,&bill,&ping,&cmd,&autoRecovery);if e!=nil{http.Error(w,"token",401);return}
 	c,e:=a.up.Upgrade(w,r,nil);if e!=nil{return}
 	a.mu.Lock();a.agents[id]=c;a.mu.Unlock()
+	a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"agent_online","Agent 已连接并开始上报数据")
 	c.WriteJSON(map[string]any{"type":"config","pingTarget":ping,"changeIpCommand":cmd,"autoRecovery":autoRecovery})
-	defer func(){a.mu.Lock();delete(a.agents,id);a.mu.Unlock();c.Close()}()
+	defer func(){a.mu.Lock();delete(a.agents,id);a.mu.Unlock();c.Close();a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"agent_offline","Agent 连接已断开")}()
 	for{
 		var x struct{Type string `json:"type"`;Metric *Metric `json:"metric"`;Event,Detail,IPv4 string}
 		if c.ReadJSON(&x)!=nil{return}
