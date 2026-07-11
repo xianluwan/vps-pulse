@@ -11,11 +11,11 @@
   const labels = {
     agent_online:'Agent 上线',agent_offline:'Agent 离线',
     action_ping:'手动 Ping',action_changeip:'手动换 IP',action_dns:'手动更新 DNS',action_reboot:'手动重启',action_failed:'操作失败',
-    ping_ok:'Ping 成功',ping_failed:'Ping 失败',ping_recovered:'连通性恢复',
+    ping_check_started:'开始自动 Ping',ping_ok:'Ping 成功',ping_failed:'Ping 失败',ping_recovered:'连通性恢复',
     change_ip_started:'开始换 IP',change_ip_command_ok:'换 IP 命令成功',change_ip_failed:'换 IP 失败',change_ip_skipped:'换 IP 已跳过',
     ip_check:'检测新 IP',ip_detected:'发现新 IP',ip_changed:'IP 已变化',
     dns_updated:'DNS 更新成功',dns_failed:'DNS 更新失败',
-    auto_recovery_config:'自动恢复设置',reboot:'重启 VPS'
+    auto_recovery_config:'自动恢复设置',settings_updated:'服务器设置已保存',reboot:'重启 VPS'
   };
   const safe = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
