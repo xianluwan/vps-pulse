@@ -38,6 +38,7 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 	p:=strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path,"/api/vps/"),"/"),"/")
 	id:=p[0]
 	if id==""{http.Error(w,"缺少 VPS ID",400);return}
+	if id=="telegram"{a.telegramSettings(w,r);return}
 	if id=="logs"{
 		if r.Method=="DELETE"{if _,e:=a.db.Exec(`DELETE FROM events`);e!=nil{http.Error(w,e.Error(),500);return};w.WriteHeader(http.StatusNoContent);return}
 		if r.Method!="GET"{http.Error(w,"method",405);return}
@@ -95,6 +96,8 @@ func(a *App)agent(w http.ResponseWriter,r *http.Request){
 			for v:=range a.views{v.WriteJSON(map[string]any{"type":"metric","vpsId":id,"metric":x.Metric})};a.mu.Unlock();continue
 		}
 		a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),x.Event,x.Detail)
+		kind:="resource";if strings.Contains(x.Event,"ping"){kind="ping"}else if strings.Contains(x.Event,"ip_")||strings.Contains(x.Event,"change_ip"){kind="ip"}else if strings.Contains(x.Event,"dns"){kind="dns"}else if strings.Contains(x.Event,"agent_"){kind="agent"}
+		var vpsName string;_ = a.db.QueryRow(`SELECT name FROM vps WHERE id=?`,id).Scan(&vpsName);a.telegramNotify(kind,"["+vpsName+"] "+x.Detail)
 		if x.Event=="ip_changed"&&x.IPv4!=""{
 			a.db.Exec(`UPDATE vps SET ipv4=? WHERE id=?`,x.IPv4,id)
 			go func(){if err:=a.updateCloudflareDNS(id);err!=nil{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"dns_failed",err.Error())}else{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"dns_updated","新 IP 连通成功，Cloudflare A 记录已更新")}}()
