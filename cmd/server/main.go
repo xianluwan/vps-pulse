@@ -38,6 +38,11 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 		w.WriteHeader(http.StatusNoContent);return
 	}
 	if len(p)>1{
+		if p[1]=="dns"{
+			if e:=a.updateCloudflareDNS(id);e!=nil{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"dns_failed",e.Error());http.Error(w,e.Error(),502);return}
+			a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"dns_updated","Cloudflare A 记录更新成功")
+			write(w,map[string]bool{"ok":true});return
+		}
 		a.mu.RLock();c:=a.agents[id];a.mu.RUnlock()
 		if c==nil{http.Error(w,"Agent 离线",409);return}
 		c.WriteJSON(map[string]any{"type":"action","action":p[1]});write(w,map[string]bool{"ok":true});return
