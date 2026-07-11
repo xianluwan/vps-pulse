@@ -16,6 +16,7 @@
   };
 
   render = function () {
+    const openedMenu = document.querySelector('.server-menu details[open]')?.dataset.vpsId || '';
     const on=data.filter(v=>v.online).length; $('online').textContent=`${on} / ${data.length} 在线`;
     $('cards').className='server-list';
     $('cards').innerHTML = data.map(v => `<article class="server-row">
@@ -25,10 +26,14 @@
       <div class="server-cell resource"><small>CPU</small>${meter(v.CPU,'cpu')}</div>
       <div class="server-cell resource"><small>内存</small>${meter(v.Memory)}</div>
       <div class="server-cell resource"><small>存储</small>${meter(v.Disk)}</div>
-      <div class="server-menu"><details><summary>操作</summary><div class="menu-pop">
+      <div class="server-menu"><details data-vps-id="${v.id}"><summary>操作</summary><div class="menu-pop">
         <button onclick="edit('${v.id}')">服务器设置</button><button onclick="act('${v.id}','ping')">立即 Ping</button><button onclick="act('${v.id}','changeip')">更换 IP</button><button onclick="act('${v.id}','dns')">更新 DNS</button><button onclick="copyAgentCommand('${v.id}','install')">复制安装 Agent</button><button onclick="copyAgentCommand('${v.id}','uninstall')">复制卸载 Agent</button><button onclick="confirm('确认重启？')&&act('${v.id}','reboot')">重启 VPS</button><button class="danger" onclick="removeVPS('${v.id}')">删除 VPS</button>
       </div></details></div>
     </article>`).join('') || '<div class="list-empty">还没有 VPS，点击右上角添加。</div>';
+    if (openedMenu) {
+      const menu = [...document.querySelectorAll('.server-menu details')].find(item => item.dataset.vpsId === openedMenu);
+      if (menu) menu.open = true;
+    }
   };
 
   const headerActions = document.querySelector('header>div:last-child');
