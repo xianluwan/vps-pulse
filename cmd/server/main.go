@@ -27,6 +27,14 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 	p:=strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path,"/api/vps/"),"/"),"/")
 	id:=p[0]
 	if id==""{http.Error(w,"缺少 VPS ID",400);return}
+	if id=="logs"{
+		if r.Method=="DELETE"{if _,e:=a.db.Exec(`DELETE FROM events`);e!=nil{http.Error(w,e.Error(),500);return};w.WriteHeader(http.StatusNoContent);return}
+		if r.Method!="GET"{http.Error(w,"method",405);return}
+		_,_=a.db.Exec(`DELETE FROM events WHERE at < ?`,time.Now().Add(-7*24*time.Hour))
+		rows,e:=a.db.Query(`SELECT e.id,e.vps_id,COALESCE(v.name,''),e.at,e.type,e.detail FROM events e LEFT JOIN vps v ON v.id=e.vps_id WHERE e.at>=? ORDER BY e.id DESC LIMIT 500`,time.Now().Add(-7*24*time.Hour));if e!=nil{http.Error(w,e.Error(),500);return};defer rows.Close()
+		logs:=[]map[string]any{};for rows.Next(){var logID int;var vpsID,name,typ,detail string;var at time.Time;if rows.Scan(&logID,&vpsID,&name,&at,&typ,&detail)==nil{logs=append(logs,map[string]any{"id":logID,"vpsId":vpsID,"vpsName":name,"at":at,"type":typ,"detail":detail})}}
+		write(w,logs);return
+	}
 	if r.Method=="DELETE"{
 		tx,e:=a.db.Begin();if e!=nil{http.Error(w,e.Error(),500);return}
 		defer tx.Rollback()
