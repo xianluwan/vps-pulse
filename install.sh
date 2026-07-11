@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 APP_NAME="VPS Pulse"
 INSTALL_DIR="${VPS_PULSE_DIR:-/opt/vps-pulse}"
-REPO_URL="${VPS_PULSE_REPO:-https://github.com/OWNER/vps-pulse.git}"
+REPO_URL="${VPS_PULSE_REPO:-https://github.com/xianluwan/vps-pulse.git}"
 BRANCH="${VPS_PULSE_BRANCH:-main}"
 PORT="${VPS_PULSE_PORT:-8080}"
 
