@@ -5,7 +5,7 @@
 ## 一键部署
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/vps-pulse/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xianluwan/vps-pulse/main/install.sh | sudo bash
 ```
 
 安装完成后会在终端输出访问地址和随机管理员密码，并保存到 `/root/vps-pulse-credentials.txt`。
