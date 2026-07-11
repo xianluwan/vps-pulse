@@ -9,5 +9,5 @@ function openAdd(){$('formTitle').textContent='添加 VPS';$('editor').querySele
 async function save(e){e.preventDefault();let id=$('id').value,v={name:$('name').value,billingDay:+$('billingDay').value,dayLimit:+$('dayLimit').value*1073741824,monthLimit:+$('monthLimit').value*1073741824,pingTarget:$('pingTarget').value,changeIpCommand:$('changeIpCommand').value,cfZoneId:$('cfZoneId').value,cfRecordId:$('cfRecordId').value,cfRecordName:$('cfRecordName').value,cfToken:$('cfToken').value};try{if(id)await api('/api/vps/'+id,{method:'PUT',body:JSON.stringify(v)});else{let x=await api('/api/vps',{method:'POST',body:JSON.stringify(v)});$('install').textContent='安装命令：\n'+x.install;data=await api('/api/vps');render();return}data=await api('/api/vps');render();$('editor').close()}catch(x){alert(x.message)}}async function act(id,a){try{await api(`/api/vps/${id}/${a}`,{method:'POST'});alert('指令已发送')}catch(e){alert(e.message)}}
 setInterval(()=>$('clock').textContent=new Date().toLocaleString('zh-CN',{hour12:false}),1000);start();
 
-// Agent 仍按 100ms 采样；界面最多每 250ms 重绘一次，减少数字抖动和浏览器负载。
-const drawNow=render;let drawTimer=0;render=function(){if(drawTimer)return;drawTimer=setTimeout(()=>{drawTimer=0;drawNow()},500)};
+// Agent 与界面每秒更新一次，降低探针和浏览器开销。
+const drawNow=render;let drawTimer=0;render=function(){if(drawTimer)return;drawTimer=setTimeout(()=>{drawTimer=0;drawNow()},1000)};
