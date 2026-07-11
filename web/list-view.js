@@ -4,11 +4,29 @@
   const clean = s => String(s || '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const meter = (value, kind='normal') => `<div class="list-meter ${kind}"><i style="width:${Math.min(Math.max(+value||0,0),100)}%"></i><b>${(+value||0).toFixed(1)}%</b></div>`;
 
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly','');
+    area.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand('copy');
+    area.remove();
+    if (!ok) throw new Error('浏览器拒绝复制，请配置 HTTPS 后重试');
+  }
+
   window.copyAgentCommand = async (id, type) => {
     const uninstall = "sudo systemctl disable --now vps-pulse-agent 2>/dev/null || true; sudo rm -f /etc/systemd/system/vps-pulse-agent.service /usr/local/bin/vps-pulse-agent; sudo systemctl daemon-reload; echo 'VPS Pulse Agent 已卸载'";
     const command = type === 'install' ? localStorage.getItem(`vpspulse:install:${id}`) : uninstall;
     if (!command) { alert('旧 VPS 没有保存安装命令，请重新添加以生成新令牌。'); return; }
-    await navigator.clipboard.writeText(command); alert('命令已复制');
+    try { await copyText(command); alert('命令已复制'); }
+    catch (error) { prompt('自动复制失败，请手动复制下面的命令：', command); }
   };
   window.removeVPS = async id => {
     if (!confirm('确定删除这台 VPS 吗？流量统计和日志也会删除。远端 Agent 不会自动卸载。')) return;
