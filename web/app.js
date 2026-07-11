@@ -10,4 +10,4 @@ async function save(e){e.preventDefault();let id=$('id').value,v={name:$('name')
 setInterval(()=>$('clock').textContent=new Date().toLocaleString('zh-CN',{hour12:false}),1000);start();
 
 // Agent 仍按 100ms 采样；界面最多每 250ms 重绘一次，减少数字抖动和浏览器负载。
-const drawNow=render;let drawTimer=0;render=function(){if(drawTimer)return;drawTimer=setTimeout(()=>{drawTimer=0;drawNow()},250)};
+const drawNow=render;let drawTimer=0;render=function(){if(drawTimer)return;drawTimer=setTimeout(()=>{drawTimer=0;drawNow()},500)};
