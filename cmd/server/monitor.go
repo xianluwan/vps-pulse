@@ -25,6 +25,9 @@ type serviceMonitor struct {
 	ExpectedStatus      int        `json:"expectedStatus"`
 	Keyword             string     `json:"keyword"`
 	NotifyAfter         int        `json:"notifyAfter"`
+	FailureAction       string     `json:"failureAction"`
+	ActionCooldownSec   int        `json:"actionCooldownSec"`
+	LastActionAt        *time.Time `json:"lastActionAt,omitempty"`
 	Enabled             bool       `json:"enabled"`
 	LastStatus          string     `json:"lastStatus"`
 	LastLatencyMS       int64      `json:"lastLatencyMs"`
@@ -38,6 +41,9 @@ var monitorRunning sync.Map
 
 func (a *App) ensureMonitorSchema() {
 	_, _ = a.db.Exec(`CREATE TABLE IF NOT EXISTS service_monitors(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,vps_id TEXT DEFAULT '',type TEXT NOT NULL,target TEXT NOT NULL,interval_sec INTEGER DEFAULT 60,timeout_sec INTEGER DEFAULT 5,expected_status INTEGER DEFAULT 200,keyword TEXT DEFAULT '',notify_after INTEGER DEFAULT 3,enabled INTEGER DEFAULT 1,last_status TEXT DEFAULT 'unknown',last_latency_ms INTEGER DEFAULT 0,last_error TEXT DEFAULT '',last_checked DATETIME,consecutive_failures INTEGER DEFAULT 0)`)
+	_, _ = a.db.Exec(`ALTER TABLE service_monitors ADD COLUMN failure_action TEXT DEFAULT 'notify'`)
+	_, _ = a.db.Exec(`ALTER TABLE service_monitors ADD COLUMN action_cooldown_sec INTEGER DEFAULT 1800`)
+	_, _ = a.db.Exec(`ALTER TABLE service_monitors ADD COLUMN last_action_at DATETIME`)
 }
 func (a *App) startMonitorController() {
 	a.ensureMonitorSchema()
@@ -105,18 +111,31 @@ func (a *App) monitorAPI(w http.ResponseWriter, r *http.Request, path []string) 
 	if m.NotifyAfter < 1 {
 		m.NotifyAfter = 1
 	}
+	if m.FailureAction != "changeip" {
+		m.FailureAction = "notify"
+	}
+	if m.FailureAction == "changeip" && m.VPSID == "" {
+		http.Error(w, "触发换 IP 必须关联 VPS", 400)
+		return
+	}
+	if m.ActionCooldownSec < 300 {
+		m.ActionCooldownSec = 300
+	}
+	if m.ActionCooldownSec > 86400 {
+		m.ActionCooldownSec = 86400
+	}
 	if m.ExpectedStatus == 0 {
 		m.ExpectedStatus = 200
 	}
 	if m.ID == 0 {
-		res, e := a.db.Exec(`INSERT INTO service_monitors(name,vps_id,type,target,interval_sec,timeout_sec,expected_status,keyword,notify_after,enabled) VALUES(?,?,?,?,?,?,?,?,?,?)`, m.Name, m.VPSID, m.Type, m.Target, m.IntervalSec, m.TimeoutSec, m.ExpectedStatus, m.Keyword, m.NotifyAfter, m.Enabled)
+		res, e := a.db.Exec(`INSERT INTO service_monitors(name,vps_id,type,target,interval_sec,timeout_sec,expected_status,keyword,notify_after,enabled,failure_action,action_cooldown_sec) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, m.Name, m.VPSID, m.Type, m.Target, m.IntervalSec, m.TimeoutSec, m.ExpectedStatus, m.Keyword, m.NotifyAfter, m.Enabled, m.FailureAction, m.ActionCooldownSec)
 		if e != nil {
 			http.Error(w, e.Error(), 500)
 			return
 		}
 		m.ID, _ = res.LastInsertId()
 	} else {
-		_, e := a.db.Exec(`UPDATE service_monitors SET name=?,vps_id=?,type=?,target=?,interval_sec=?,timeout_sec=?,expected_status=?,keyword=?,notify_after=?,enabled=? WHERE id=?`, m.Name, m.VPSID, m.Type, m.Target, m.IntervalSec, m.TimeoutSec, m.ExpectedStatus, m.Keyword, m.NotifyAfter, m.Enabled, m.ID)
+		_, e := a.db.Exec(`UPDATE service_monitors SET name=?,vps_id=?,type=?,target=?,interval_sec=?,timeout_sec=?,expected_status=?,keyword=?,notify_after=?,enabled=?,failure_action=?,action_cooldown_sec=? WHERE id=?`, m.Name, m.VPSID, m.Type, m.Target, m.IntervalSec, m.TimeoutSec, m.ExpectedStatus, m.Keyword, m.NotifyAfter, m.Enabled, m.FailureAction, m.ActionCooldownSec, m.ID)
 		if e != nil {
 			http.Error(w, e.Error(), 500)
 			return
@@ -126,7 +145,7 @@ func (a *App) monitorAPI(w http.ResponseWriter, r *http.Request, path []string) 
 	write(w, map[string]any{"ok": true, "id": m.ID})
 }
 func (a *App) listMonitors() ([]serviceMonitor, error) {
-	rows, e := a.db.Query(`SELECT id,name,vps_id,type,target,interval_sec,timeout_sec,expected_status,keyword,notify_after,enabled,last_status,last_latency_ms,last_error,last_checked,consecutive_failures FROM service_monitors ORDER BY id`)
+	rows, e := a.db.Query(`SELECT id,name,vps_id,type,target,interval_sec,timeout_sec,expected_status,keyword,notify_after,enabled,last_status,last_latency_ms,last_error,last_checked,consecutive_failures,failure_action,action_cooldown_sec,last_action_at FROM service_monitors ORDER BY id`)
 	if e != nil {
 		return nil, e
 	}
@@ -134,7 +153,7 @@ func (a *App) listMonitors() ([]serviceMonitor, error) {
 	out := []serviceMonitor{}
 	for rows.Next() {
 		var m serviceMonitor
-		if e = rows.Scan(&m.ID, &m.Name, &m.VPSID, &m.Type, &m.Target, &m.IntervalSec, &m.TimeoutSec, &m.ExpectedStatus, &m.Keyword, &m.NotifyAfter, &m.Enabled, &m.LastStatus, &m.LastLatencyMS, &m.LastError, &m.LastChecked, &m.ConsecutiveFailures); e != nil {
+		if e = rows.Scan(&m.ID, &m.Name, &m.VPSID, &m.Type, &m.Target, &m.IntervalSec, &m.TimeoutSec, &m.ExpectedStatus, &m.Keyword, &m.NotifyAfter, &m.Enabled, &m.LastStatus, &m.LastLatencyMS, &m.LastError, &m.LastChecked, &m.ConsecutiveFailures, &m.FailureAction, &m.ActionCooldownSec, &m.LastActionAt); e != nil {
 			return nil, e
 		}
 		out = append(out, m)
@@ -188,6 +207,9 @@ func (a *App) executeMonitor(m serviceMonitor) {
 		detail := fmt.Sprintf("监控 %s 连续失败 %d 次：%s", m.Name, failures, message)
 		a.addMonitorEvent(m, "monitor_down", detail)
 		a.telegramNotify("resource", "[服务故障] "+detail)
+		if m.FailureAction == "changeip" {
+			a.triggerMonitorChangeIP(m, now)
+		}
 	} else if status == "up" && oldStatus == "down" {
 		detail := fmt.Sprintf("监控 %s 已恢复，延迟 %dms", m.Name, latency)
 		a.addMonitorEvent(m, "monitor_recovered", detail)
@@ -195,6 +217,28 @@ func (a *App) executeMonitor(m serviceMonitor) {
 	} else if status == "up" && oldStatus == "unknown" {
 		a.addMonitorEvent(m, "monitor_up", fmt.Sprintf("监控 %s 首次检测成功，延迟 %dms", m.Name, latency))
 	}
+}
+func (a *App) triggerMonitorChangeIP(m serviceMonitor, now time.Time) {
+	if m.VPSID == "" {
+		return
+	}
+	if m.LastActionAt != nil && now.Sub(*m.LastActionAt) < time.Duration(m.ActionCooldownSec)*time.Second {
+		a.addMonitorEvent(m, "monitor_action_skipped", fmt.Sprintf("监控 %s 已进入换 IP 冷却期，本次跳过", m.Name))
+		return
+	}
+	a.mu.RLock()
+	conn := a.agents[m.VPSID]
+	a.mu.RUnlock()
+	if conn == nil {
+		a.addMonitorEvent(m, "monitor_changeip_failed", fmt.Sprintf("监控 %s 触发换 IP 失败：Agent 不在线", m.Name))
+		return
+	}
+	if e := conn.WriteJSON(map[string]any{"type": "action", "action": "changeip"}); e != nil {
+		a.addMonitorEvent(m, "monitor_changeip_failed", fmt.Sprintf("监控 %s 触发换 IP 失败：%s", m.Name, e))
+		return
+	}
+	_, _ = a.db.Exec(`UPDATE service_monitors SET last_action_at=? WHERE id=?`, now, m.ID)
+	a.addMonitorEvent(m, "monitor_changeip_triggered", fmt.Sprintf("监控 %s 连续失败 %d 次，已向关联 VPS 下发换 IP 命令", m.Name, m.NotifyAfter))
 }
 func runMonitorCheck(m serviceMonitor) error {
 	timeout := time.Duration(m.TimeoutSec) * time.Second
