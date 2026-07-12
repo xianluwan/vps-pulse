@@ -210,10 +210,12 @@ func (a *App) executeMonitor(m serviceMonitor) {
 		if m.FailureAction == "changeip" {
 			a.triggerMonitorChangeIP(m, now)
 		}
+		go a.activateFailoverForMonitor(m.ID)
 	} else if status == "up" && oldStatus == "down" {
 		detail := fmt.Sprintf("监控 %s 已恢复，延迟 %dms", m.Name, latency)
 		a.addMonitorEvent(m, "monitor_recovered", detail)
 		a.telegramNotify("resource", "[服务恢复] "+detail)
+		go a.recoverFailoverForMonitor(m.ID)
 	} else if status == "up" && oldStatus == "unknown" {
 		a.addMonitorEvent(m, "monitor_up", fmt.Sprintf("监控 %s 首次检测成功，延迟 %dms", m.Name, latency))
 	}

@@ -12,20 +12,22 @@ import (
 )
 
 type failoverRule struct {
-	ID            int64      `json:"id"`
-	Name          string     `json:"name"`
-	Enabled       bool       `json:"enabled"`
-	PrimaryVPSID  string     `json:"primaryVpsId"`
-	BackupVPSID   string     `json:"backupVpsId"`
-	RecordName    string     `json:"recordName"`
-	RecordType    string     `json:"recordType"`
-	PrimaryTarget string     `json:"primaryTarget"`
-	BackupTarget  string     `json:"backupTarget"`
-	CFToken       string     `json:"cfToken,omitempty"`
-	Proxied       bool       `json:"proxied"`
-	Status        string     `json:"status"`
-	LastSwitch    *time.Time `json:"lastSwitch,omitempty"`
-	LastError     string     `json:"lastError,omitempty"`
+	ID               int64      `json:"id"`
+	Name             string     `json:"name"`
+	Enabled          bool       `json:"enabled"`
+	PrimaryVPSID     string     `json:"primaryVpsId"`
+	BackupVPSID      string     `json:"backupVpsId"`
+	PrimaryMonitorID int64      `json:"primaryMonitorId"`
+	BackupMonitorID  int64      `json:"backupMonitorId"`
+	RecordName       string     `json:"recordName"`
+	RecordType       string     `json:"recordType"`
+	PrimaryTarget    string     `json:"primaryTarget"`
+	BackupTarget     string     `json:"backupTarget"`
+	CFToken          string     `json:"cfToken,omitempty"`
+	Proxied          bool       `json:"proxied"`
+	Status           string     `json:"status"`
+	LastSwitch       *time.Time `json:"lastSwitch,omitempty"`
+	LastError        string     `json:"lastError,omitempty"`
 }
 
 var failoverLoopOnce sync.Once
@@ -33,6 +35,8 @@ var failoverActionMu sync.Mutex
 
 func (a *App) ensureFailoverSchema() {
 	_, _ = a.db.Exec(`CREATE TABLE IF NOT EXISTS failover_rules(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,enabled INTEGER DEFAULT 0,primary_vps_id TEXT NOT NULL,backup_vps_id TEXT NOT NULL,record_name TEXT NOT NULL,record_type TEXT NOT NULL DEFAULT 'A',primary_target TEXT DEFAULT '',backup_target TEXT DEFAULT '',cf_token TEXT NOT NULL,proxied INTEGER DEFAULT 0,status TEXT NOT NULL DEFAULT 'primary',last_switch DATETIME,last_error TEXT DEFAULT '')`)
+	_, _ = a.db.Exec(`ALTER TABLE failover_rules ADD COLUMN primary_monitor_id INTEGER DEFAULT 0`)
+	_, _ = a.db.Exec(`ALTER TABLE failover_rules ADD COLUMN backup_monitor_id INTEGER DEFAULT 0`)
 }
 func (a *App) startFailoverController() {
 	a.ensureFailoverSchema()
@@ -108,6 +112,14 @@ func (a *App) failoverAPI(w http.ResponseWriter, r *http.Request, path []string)
 		http.Error(w, "主 VPS 和备用 VPS 不能相同", 400)
 		return
 	}
+	if rule.PrimaryMonitorID > 0 && !a.monitorBelongsTo(rule.PrimaryMonitorID, rule.PrimaryVPSID) {
+		http.Error(w, "主服务监控必须关联主 VPS", 400)
+		return
+	}
+	if rule.BackupMonitorID > 0 && !a.monitorBelongsTo(rule.BackupMonitorID, rule.BackupVPSID) {
+		http.Error(w, "备用服务监控必须关联备用 VPS", 400)
+		return
+	}
 	if rule.RecordType == "CNAME" && (rule.PrimaryTarget == "" || rule.BackupTarget == "") {
 		http.Error(w, "CNAME 需要填写主目标和备用目标", 400)
 		return
@@ -131,14 +143,14 @@ func (a *App) failoverAPI(w http.ResponseWriter, r *http.Request, path []string)
 		return
 	}
 	if rule.ID == 0 {
-		res, e := a.db.Exec(`INSERT INTO failover_rules(name,enabled,primary_vps_id,backup_vps_id,record_name,record_type,primary_target,backup_target,cf_token,proxied,status) VALUES(?,?,?,?,?,?,?,?,?,?,'primary')`, rule.Name, rule.Enabled, rule.PrimaryVPSID, rule.BackupVPSID, rule.RecordName, rule.RecordType, rule.PrimaryTarget, rule.BackupTarget, rule.CFToken, rule.Proxied)
+		res, e := a.db.Exec(`INSERT INTO failover_rules(name,enabled,primary_vps_id,backup_vps_id,primary_monitor_id,backup_monitor_id,record_name,record_type,primary_target,backup_target,cf_token,proxied,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'primary')`, rule.Name, rule.Enabled, rule.PrimaryVPSID, rule.BackupVPSID, rule.PrimaryMonitorID, rule.BackupMonitorID, rule.RecordName, rule.RecordType, rule.PrimaryTarget, rule.BackupTarget, rule.CFToken, rule.Proxied)
 		if e != nil {
 			http.Error(w, e.Error(), 500)
 			return
 		}
 		rule.ID, _ = res.LastInsertId()
 	} else {
-		_, e := a.db.Exec(`UPDATE failover_rules SET name=?,enabled=?,primary_vps_id=?,backup_vps_id=?,record_name=?,record_type=?,primary_target=?,backup_target=?,cf_token=?,proxied=? WHERE id=?`, rule.Name, rule.Enabled, rule.PrimaryVPSID, rule.BackupVPSID, rule.RecordName, rule.RecordType, rule.PrimaryTarget, rule.BackupTarget, rule.CFToken, rule.Proxied, rule.ID)
+		_, e := a.db.Exec(`UPDATE failover_rules SET name=?,enabled=?,primary_vps_id=?,backup_vps_id=?,primary_monitor_id=?,backup_monitor_id=?,record_name=?,record_type=?,primary_target=?,backup_target=?,cf_token=?,proxied=? WHERE id=?`, rule.Name, rule.Enabled, rule.PrimaryVPSID, rule.BackupVPSID, rule.PrimaryMonitorID, rule.BackupMonitorID, rule.RecordName, rule.RecordType, rule.PrimaryTarget, rule.BackupTarget, rule.CFToken, rule.Proxied, rule.ID)
 		if e != nil {
 			http.Error(w, e.Error(), 500)
 			return
@@ -167,7 +179,7 @@ func (a *App) manualFailoverAction(id int64, action string) error {
 	}
 	switch action {
 	case "test":
-		if !a.verifyBackup(rule.BackupVPSID) {
+		if !a.verifyRuleBackup(*rule) {
 			return fmt.Errorf("备用 VPS 主动检测失败")
 		}
 		target, e := a.failoverTarget(*rule, false)
@@ -186,7 +198,7 @@ func (a *App) manualFailoverAction(id int64, action string) error {
 		a.telegramNotify("ip", "[容灾演练] "+detail)
 		return nil
 	case "switch":
-		if !a.verifyBackup(rule.BackupVPSID) {
+		if !a.verifyRuleBackup(*rule) {
 			return fmt.Errorf("备用 VPS 主动检测失败")
 		}
 		target, e := a.failoverTarget(*rule, false)
@@ -202,7 +214,7 @@ func (a *App) manualFailoverAction(id int64, action string) error {
 		a.telegramNotify("ip", "[手动容灾] "+detail)
 		return nil
 	case "recover":
-		if !a.vpsHealthy(rule.PrimaryVPSID) {
+		if !a.rulePrimaryHealthy(*rule) {
 			return fmt.Errorf("主 VPS 当前不在线，拒绝切回")
 		}
 		target, e := a.failoverTarget(*rule, true)
@@ -223,7 +235,7 @@ func (a *App) manualFailoverAction(id int64, action string) error {
 }
 
 func (a *App) listFailoverRules() ([]failoverRule, error) {
-	rows, e := a.db.Query(`SELECT id,name,enabled,primary_vps_id,backup_vps_id,record_name,record_type,primary_target,backup_target,cf_token,proxied,status,last_switch,last_error FROM failover_rules ORDER BY id`)
+	rows, e := a.db.Query(`SELECT id,name,enabled,primary_vps_id,backup_vps_id,primary_monitor_id,backup_monitor_id,record_name,record_type,primary_target,backup_target,cf_token,proxied,status,last_switch,last_error FROM failover_rules ORDER BY id`)
 	if e != nil {
 		return nil, e
 	}
@@ -231,12 +243,42 @@ func (a *App) listFailoverRules() ([]failoverRule, error) {
 	out := []failoverRule{}
 	for rows.Next() {
 		var x failoverRule
-		if e = rows.Scan(&x.ID, &x.Name, &x.Enabled, &x.PrimaryVPSID, &x.BackupVPSID, &x.RecordName, &x.RecordType, &x.PrimaryTarget, &x.BackupTarget, &x.CFToken, &x.Proxied, &x.Status, &x.LastSwitch, &x.LastError); e != nil {
+		if e = rows.Scan(&x.ID, &x.Name, &x.Enabled, &x.PrimaryVPSID, &x.BackupVPSID, &x.PrimaryMonitorID, &x.BackupMonitorID, &x.RecordName, &x.RecordType, &x.PrimaryTarget, &x.BackupTarget, &x.CFToken, &x.Proxied, &x.Status, &x.LastSwitch, &x.LastError); e != nil {
 			return nil, e
 		}
 		out = append(out, x)
 	}
 	return out, nil
+}
+func (a *App) monitorBelongsTo(monitorID int64, vpsID string) bool {
+	var linked string
+	var enabled bool
+	return a.db.QueryRow(`SELECT vps_id,enabled FROM service_monitors WHERE id=?`, monitorID).Scan(&linked, &enabled) == nil && enabled && linked == vpsID
+}
+func (a *App) monitorHealthy(monitorID int64) bool {
+	if monitorID <= 0 {
+		return false
+	}
+	var status string
+	var checked *time.Time
+	var interval int
+	if a.db.QueryRow(`SELECT last_status,last_checked,interval_sec FROM service_monitors WHERE id=? AND enabled=1`, monitorID).Scan(&status, &checked, &interval) != nil || checked == nil {
+		return false
+	}
+	maxAge := time.Duration(interval*2+30) * time.Second
+	return status == "up" && time.Since(*checked) <= maxAge
+}
+func (a *App) verifyRuleBackup(rule failoverRule) bool {
+	if rule.BackupMonitorID > 0 {
+		return a.monitorHealthy(rule.BackupMonitorID)
+	}
+	return a.verifyBackup(rule.BackupVPSID)
+}
+func (a *App) rulePrimaryHealthy(rule failoverRule) bool {
+	if rule.PrimaryMonitorID > 0 {
+		return a.monitorHealthy(rule.PrimaryMonitorID)
+	}
+	return a.vpsHealthy(rule.PrimaryVPSID)
 }
 func (a *App) handleFailoverAgentEvent(id, event string) {
 	if a.isMaintenance(id) {
@@ -255,27 +297,49 @@ func (a *App) activateFailoverFor(primaryID string) {
 	defer failoverActionMu.Unlock()
 	rules, _ := a.listFailoverRules()
 	for _, rule := range rules {
-		if !rule.Enabled || rule.PrimaryVPSID != primaryID || rule.Status == "backup" {
+		if !rule.Enabled || rule.PrimaryVPSID != primaryID || rule.PrimaryMonitorID > 0 || rule.Status == "backup" {
 			continue
 		}
-		if !a.verifyBackup(rule.BackupVPSID) {
-			a.failRule(rule, "备用 VPS 离线或主动 Ping 检测失败，无法切换")
-			continue
+		a.activateFailoverRule(rule, "主 VPS 自愈失败")
+	}
+}
+func (a *App) activateFailoverForMonitor(monitorID int64) {
+	failoverActionMu.Lock()
+	defer failoverActionMu.Unlock()
+	rules, _ := a.listFailoverRules()
+	for _, rule := range rules {
+		if rule.Enabled && rule.Status != "backup" && rule.PrimaryMonitorID == monitorID {
+			a.activateFailoverRule(rule, "主服务监控连续失败")
 		}
-		target, e := a.failoverTarget(rule, false)
-		if e != nil {
-			a.failRule(rule, e.Error())
-			continue
+	}
+}
+func (a *App) activateFailoverRule(rule failoverRule, reason string) {
+	if !a.verifyRuleBackup(rule) {
+		a.failRule(rule, "备用服务监控未通过或备用 VPS 不可用，无法切换")
+		return
+	}
+	target, e := a.failoverTarget(rule, false)
+	if e != nil {
+		a.failRule(rule, e.Error())
+		return
+	}
+	if e = a.updateFailoverRecord(rule, target); e != nil {
+		a.failRule(rule, e.Error())
+		return
+	}
+	now := time.Now()
+	_, _ = a.db.Exec(`UPDATE failover_rules SET status='backup',last_switch=?,last_error='' WHERE id=?`, now, rule.ID)
+	detail := fmt.Sprintf("%s，Cloudflare %s 记录 %s 已切换到备用目标 %s", reason, rule.RecordType, rule.RecordName, target)
+	a.addFailoverEvent(rule.PrimaryVPSID, "failover_activated", detail)
+	a.telegramNotify("ip", "[容灾] "+detail)
+}
+func (a *App) recoverFailoverForMonitor(monitorID int64) {
+	rules, _ := a.listFailoverRules()
+	for _, rule := range rules {
+		if rule.Enabled && rule.Status == "backup" && rule.PrimaryMonitorID == monitorID {
+			go a.recoverFailoverFor(rule.PrimaryVPSID)
+			return
 		}
-		if e = a.updateFailoverRecord(rule, target); e != nil {
-			a.failRule(rule, e.Error())
-			continue
-		}
-		now := time.Now()
-		_, _ = a.db.Exec(`UPDATE failover_rules SET status='backup',last_switch=?,last_error='' WHERE id=?`, now, rule.ID)
-		detail := fmt.Sprintf("主 VPS 自愈失败，Cloudflare %s 记录 %s 已切换到备用目标 %s", rule.RecordType, rule.RecordName, target)
-		a.addFailoverEvent(primaryID, "failover_activated", detail)
-		a.telegramNotify("ip", "[容灾] "+detail)
 	}
 }
 func (a *App) recoverFailoverFor(primaryID string) {
@@ -286,7 +350,7 @@ func (a *App) recoverFailoverFor(primaryID string) {
 		if !rule.Enabled || rule.PrimaryVPSID != primaryID || rule.Status != "backup" {
 			continue
 		}
-		if !a.vpsHealthy(primaryID) {
+		if !a.rulePrimaryHealthy(rule) {
 			continue
 		}
 		target, e := a.failoverTarget(rule, true)
@@ -317,6 +381,13 @@ func (a *App) failoverRecoveryLoop() {
 				continue
 			}
 			seen[rule.PrimaryVPSID] = true
+			if rule.PrimaryMonitorID > 0 {
+				a.addFailoverEvent(rule.PrimaryVPSID, "failover_recheck", "容灾期间复检主服务监控")
+				if a.monitorHealthy(rule.PrimaryMonitorID) {
+					go a.recoverFailoverFor(rule.PrimaryVPSID)
+				}
+				continue
+			}
 			a.addFailoverEvent(rule.PrimaryVPSID, "failover_recheck", "容灾期间开始复检主 VPS 连通性")
 			a.mu.RLock()
 			conn := a.agents[rule.PrimaryVPSID]
