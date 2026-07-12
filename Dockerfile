@@ -1,7 +1,8 @@
 FROM golang:1.24-alpine AS build
+ARG VERSION=dev
 WORKDIR /src
 COPY . .
-RUN go mod tidy && CGO_ENABLED=0 go build -o /panel ./cmd/server && CGO_ENABLED=0 go build -o /agent ./cmd/agent
+RUN go mod tidy && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /panel ./cmd/server && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /agent ./cmd/agent
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=build /panel /usr/local/bin/panel

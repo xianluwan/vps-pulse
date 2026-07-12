@@ -7,6 +7,7 @@ MODE="${3:-}"
 SERVICE="vps-pulse-agent"
 SERVICE_FILE="/etc/systemd/system/${SERVICE}.service"
 BINARY="/usr/local/bin/vps-pulse-agent"
+TOKEN_FILE="/etc/vps-pulse-agent.token"
 
 if [ -z "$SERVER" ] || [ -z "$TOKEN" ]; then
   echo "用法: install-agent.sh <面板地址> <Agent Token> [--force]" >&2
@@ -122,6 +123,10 @@ chmod 755 "$TMP_FILE"
 mv -f "$TMP_FILE" "$BINARY"
 trap - EXIT INT TERM
 
+umask 077
+printf '%s' "$TOKEN" > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=VPS Pulse Agent
@@ -130,7 +135,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$BINARY -server $SERVER -token $TOKEN
+ExecStart=$BINARY -server $SERVER -token-file $TOKEN_FILE
 Restart=always
 RestartSec=3
 
