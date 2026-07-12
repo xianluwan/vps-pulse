@@ -151,8 +151,10 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: activ
   ufw allow 443/tcp >/dev/null
 fi
 
-info "构建并启动面板与 HTTPS 反向代理"
-docker compose up -d --build
+info "下载预构建镜像"
+docker compose pull
+info "启动面板与 HTTPS 反向代理"
+docker compose up -d
 
 info "等待 SSL 证书签发"
 READY=0

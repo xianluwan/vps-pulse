@@ -1,6 +1,7 @@
 services:
   panel:
-    build: .
+    image: ghcr.io/xianluwan/vps-pulse:latest
+    pull_policy: always
     restart: unless-stopped
     env_file: .env
     expose:
