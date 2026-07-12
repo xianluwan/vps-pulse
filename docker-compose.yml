@@ -2,8 +2,31 @@ services:
   panel:
     build: .
     restart: unless-stopped
-    ports:
-      - "8080:8080"
     env_file: .env
+    expose:
+      - "8080"
     volumes:
       - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - panel
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy_data:
+  caddy_config:
