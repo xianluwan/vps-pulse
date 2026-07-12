@@ -1,20 +1,259 @@
 package main
 
-import("bytes";"encoding/json";"fmt";"io";"net/http";"strings";"time")
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
 
-type tgUpdate struct{UpdateID int64 `json:"update_id"`;Message *struct{Text string `json:"text"`;Chat struct{ID int64 `json:"id"`} `json:"chat"`;From struct{ID int64 `json:"id"`} `json:"from"`} `json:"message"`;Callback *struct{ID string `json:"id"`;Data string `json:"data"`;From struct{ID int64 `json:"id"`} `json:"from"`;Message struct{Chat struct{ID int64 `json:"id"`} `json:"chat"`} `json:"message"`} `json:"callback_query"`}
-type tgResponse struct{OK bool `json:"ok"`;Result []tgUpdate `json:"result"`}
+type tgUpdate struct {
+	UpdateID int64 `json:"update_id"`
+	Message  *struct {
+		Text string `json:"text"`
+		Chat struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+		From struct {
+			ID int64 `json:"id"`
+		} `json:"from"`
+	} `json:"message"`
+	Callback *struct {
+		ID   string `json:"id"`
+		Data string `json:"data"`
+		From struct {
+			ID int64 `json:"id"`
+		} `json:"from"`
+		Message struct {
+			Chat struct {
+				ID int64 `json:"id"`
+			} `json:"chat"`
+		} `json:"message"`
+	} `json:"callback_query"`
+}
+type tgResponse struct {
+	OK     bool       `json:"ok"`
+	Result []tgUpdate `json:"result"`
+}
 
-func(a *App)startTelegramBot(){telegramLoopOnce.Do(func(){go a.telegramLoop()})}
-func(a *App)telegramLoop(){var offset int64;registered:="";for{s,e:=a.loadTelegram();if e!=nil||!s.Enabled||s.BotToken==""{time.Sleep(5*time.Second);continue};if registered!=s.BotToken{_ = tgSetCommands(s.BotToken);registered=s.BotToken};url:=fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=20&allowed_updates=%s",s.BotToken,offset,`["message","callback_query"]`);client:=http.Client{Timeout:25*time.Second};resp,e:=client.Get(url);if e!=nil{time.Sleep(3*time.Second);continue};b,_:=io.ReadAll(io.LimitReader(resp.Body,1<<20));resp.Body.Close();var result tgResponse;if json.Unmarshal(b,&result)!=nil||!result.OK{time.Sleep(3*time.Second);continue};for _,u:=range result.Result{offset=u.UpdateID+1;a.handleTelegramUpdate(s,u)}}}
-func(a *App)handleTelegramUpdate(s telegramSettings,u tgUpdate){allowed:=strings.TrimSpace(s.AllowedUserID);if u.Message!=nil{uid:=fmt.Sprint(u.Message.From.ID);if uid!=allowed{a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES('',?,?,?)`,time.Now(),"telegram_denied","拒绝未授权 Telegram 用户: "+uid);return};a.handleTGCommand(s,u.Message.Chat.ID,strings.TrimSpace(u.Message.Text));return};if u.Callback!=nil{uid:=fmt.Sprint(u.Callback.From.ID);if uid!=allowed{return};a.answerCallback(s.BotToken,u.Callback.ID);p:=strings.Split(u.Callback.Data,":");if len(p)==3&&p[0]=="confirm"{a.runTGAction(s,u.Callback.Message.Chat.ID,p[2],p[1])}}}
-func(a *App)handleTGCommand(s telegramSettings,chat int64,text string){p:=strings.Fields(text);if len(p)==0{return};cmd:=strings.Split(strings.TrimPrefix(p[0],"/"),"@")[0];arg:="";if len(p)>1{arg=p[1]};switch cmd{case "start","help":a.tgSend(s.BotToken,chat,"VPS Pulse 机器人已连接\n\n/status 全部状态\n/vps VPS 列表\n/ping <ID> 立即 Ping\n/changeip <ID> 换 IP\n/dns <ID> 更新 DNS\n/reboot <ID> 重启\n/logs [ID] 最近日志\n/alerts 通知状态",nil);case "vps":a.tgSend(s.BotToken,chat,a.tgVPSList(),nil);case "status":a.tgSend(s.BotToken,chat,a.tgStatus(arg),nil);case "logs":a.tgSend(s.BotToken,chat,a.tgLogs(arg),nil);case "alerts":a.tgSend(s.BotToken,chat,fmt.Sprintf("通知状态：%t\nAgent：%t\nPing：%t\n换 IP：%t\nDNS：%t\n资源：%t",s.Enabled,s.NotifyAgent,s.NotifyPing,s.NotifyIP,s.NotifyDNS,s.NotifyResource),nil);case "ping","dns":if arg==""{a.tgSend(s.BotToken,chat,"请提供 VPS ID，例如 /ping abc123",nil)}else{a.runTGAction(s,chat,arg,cmd)};case "changeip","reboot":if arg==""{a.tgSend(s.BotToken,chat,"请提供 VPS ID",nil)}else{a.tgConfirm(s,chat,arg,cmd)};default:a.tgSend(s.BotToken,chat,"未知命令，发送 /help 查看帮助",nil)}}
-func(a *App)tgVPSList()string{rows,e:=a.db.Query(`SELECT id,name,ipv4 FROM vps ORDER BY name`);if e!=nil{return "读取失败"};defer rows.Close();var b strings.Builder;b.WriteString("VPS 列表\n");for rows.Next(){var id,n,ip string;rows.Scan(&id,&n,&ip);fmt.Fprintf(&b,"\n%s\nID: %s\nIP: %s\n",n,id,ip)};return b.String()}
-func(a *App)tgStatus(id string)string{query:=`SELECT id,name,ipv4,day_bytes,month_bytes,total_bytes FROM vps`;args:=[]any{};if id!=""{query+=` WHERE id=?`;args=append(args,id)};rows,e:=a.db.Query(query,args...);if e!=nil{return "读取失败"};defer rows.Close();var b strings.Builder;for rows.Next(){var vid,n,ip string;var d,m,t uint64;rows.Scan(&vid,&n,&ip,&d,&m,&t);a.mu.RLock();metric,ok:=a.live[vid];a.mu.RUnlock();fmt.Fprintf(&b,"%s [%s]\n%s\n在线: %t | CPU %.1f%% | 内存 %.1f%% | 磁盘 %.1f%%\n速度 ↓%.1f ↑%.1f KB/s\n流量 今日 %.2fGB | 本月 %.2fGB | 累计 %.2fGB\n\n",n,vid,ip,ok&&time.Since(metric.At)<15*time.Second,metric.CPU,metric.Memory,metric.Disk,float64(metric.RxBPS)/1024,float64(metric.TxBPS)/1024,float64(d)/1073741824,float64(m)/1073741824,float64(t)/1073741824)};if b.Len()==0{return "未找到 VPS"};return b.String()}
-func(a *App)tgLogs(id string)string{q:=`SELECT at,type,detail FROM events`;args:=[]any{};if id!=""{q+=` WHERE vps_id=?`;args=append(args,id)};q+=` ORDER BY id DESC LIMIT 10`;rows,e:=a.db.Query(q,args...);if e!=nil{return "读取失败"};defer rows.Close();var b strings.Builder;b.WriteString("最近日志\n");for rows.Next(){var at time.Time;var typ,detail string;rows.Scan(&at,&typ,&detail);fmt.Fprintf(&b,"\n%s %s\n%s\n",at.Format("01-02 15:04:05"),typ,detail)};return b.String()}
-func(a *App)tgConfirm(s telegramSettings,chat int64,id,action string){name:=action;if action=="changeip"{name="换 IP"}else if action=="reboot"{name="重启"};markup:=map[string]any{"inline_keyboard":[][]map[string]string{{{"text":"确认执行","callback_data":"confirm:"+action+":"+id},{"text":"取消","callback_data":"cancel"}}}};a.tgSend(s.BotToken,chat,fmt.Sprintf("确认对 VPS %s 执行%s？",id,name),markup)}
-func(a *App)runTGAction(s telegramSettings,chat int64,id,action string){a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),"telegram_action","Telegram 请求执行: "+action);if action=="dns"{if e:=a.updateCloudflareDNS(id);e!=nil{a.tgSend(s.BotToken,chat,"DNS 更新失败: "+e.Error(),nil)}else{a.tgSend(s.BotToken,chat,"DNS 更新成功",nil)};return};a.mu.RLock();c:=a.agents[id];a.mu.RUnlock();if c==nil{a.tgSend(s.BotToken,chat,"执行失败：Agent 离线或 VPS ID 不存在",nil);return};if e:=c.WriteJSON(map[string]string{"type":"action","action":action});e!=nil{a.tgSend(s.BotToken,chat,"发送失败: "+e.Error(),nil);return};a.tgSend(s.BotToken,chat,"指令已发送，执行结果会通过通知和日志返回",nil)}
-func(a *App)tgSend(token string,chat int64,text string,markup any){payload:=map[string]any{"chat_id":chat,"text":text};if markup!=nil{payload["reply_markup"]=markup};tgCall(token,"sendMessage",payload)}
-func(a *App)answerCallback(token,id string){tgCall(token,"answerCallbackQuery",map[string]any{"callback_query_id":id})}
-func tgCall(token,method string,payload any)error{b,_:=json.Marshal(payload);resp,e:=http.Post("https://api.telegram.org/bot"+token+"/"+method,"application/json",bytes.NewReader(b));if e!=nil{return e};defer resp.Body.Close();if resp.StatusCode/100!=2{return fmt.Errorf("%s",resp.Status)};return nil}
-func tgSetCommands(token string)error{commands:=[]map[string]string{{"command":"status","description":"查看 VPS 状态"},{"command":"vps","description":"查看 VPS 列表"},{"command":"ping","description":"立即 Ping"},{"command":"changeip","description":"手动换 IP"},{"command":"dns","description":"更新 DNS"},{"command":"reboot","description":"重启 VPS"},{"command":"logs","description":"最近日志"},{"command":"alerts","description":"通知状态"},{"command":"help","description":"帮助"}};return tgCall(token,"setMyCommands",map[string]any{"commands":commands})}
+func (a *App) startTelegramBot() { telegramLoopOnce.Do(func() { go a.telegramLoop() }) }
+func (a *App) telegramLoop() {
+	var offset int64
+	registered := ""
+	for {
+		s, e := a.loadTelegram()
+		if e != nil || !s.Enabled || s.BotToken == "" {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if registered != s.BotToken {
+			_ = tgSetCommands(s.BotToken)
+			registered = s.BotToken
+		}
+		url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=20&allowed_updates=%s", s.BotToken, offset, `["message","callback_query"]`)
+		client := http.Client{Timeout: 25 * time.Second}
+		resp, e := client.Get(url)
+		if e != nil {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		var result tgResponse
+		if json.Unmarshal(b, &result) != nil || !result.OK {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		for _, u := range result.Result {
+			offset = u.UpdateID + 1
+			a.handleTelegramUpdate(s, u)
+		}
+	}
+}
+func (a *App) handleTelegramUpdate(s telegramSettings, u tgUpdate) {
+	allowed := strings.TrimSpace(s.AllowedUserID)
+	if u.Message != nil {
+		uid := fmt.Sprint(u.Message.From.ID)
+		if uid != allowed {
+			a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES('',?,?,?)`, time.Now(), "telegram_denied", "拒绝未授权 Telegram 用户: "+uid)
+			return
+		}
+		a.handleTGCommand(s, u.Message.Chat.ID, strings.TrimSpace(u.Message.Text))
+		return
+	}
+	if u.Callback != nil {
+		uid := fmt.Sprint(u.Callback.From.ID)
+		if uid != allowed {
+			return
+		}
+		a.answerCallback(s.BotToken, u.Callback.ID)
+		p := strings.Split(u.Callback.Data, ":")
+		if len(p) == 3 && p[0] == "confirm" {
+			a.runTGAction(s, u.Callback.Message.Chat.ID, p[2], p[1])
+		}
+	}
+}
+func (a *App) handleTGCommand(s telegramSettings, chat int64, text string) {
+	p := strings.Fields(text)
+	if len(p) == 0 {
+		return
+	}
+	cmd := strings.Split(strings.TrimPrefix(p[0], "/"), "@")[0]
+	arg := ""
+	if len(p) > 1 {
+		arg = p[1]
+	}
+	switch cmd {
+	case "start", "help":
+		a.tgSend(s.BotToken, chat, "VPS Pulse 机器人已连接\n\n/status 全部状态\n/vps VPS 列表\n/ping <ID> 立即 Ping\n/changeip <ID> 换 IP\n/dns <ID> 更新 DNS\n/reboot <ID> 重启\n/logs [ID] 最近日志\n/alerts 通知状态", nil)
+	case "vps":
+		a.tgSend(s.BotToken, chat, a.tgVPSList(), nil)
+	case "status":
+		a.tgSend(s.BotToken, chat, a.tgStatus(arg), nil)
+	case "logs":
+		a.tgSend(s.BotToken, chat, a.tgLogs(arg), nil)
+	case "alerts":
+		a.tgSend(s.BotToken, chat, fmt.Sprintf("通知状态：%t\nAgent：%t\nPing：%t\n换 IP：%t\nDNS：%t\n资源：%t", s.Enabled, s.NotifyAgent, s.NotifyPing, s.NotifyIP, s.NotifyDNS, s.NotifyResource), nil)
+	case "ping", "dns":
+		if arg == "" {
+			a.tgSend(s.BotToken, chat, "请提供 VPS ID，例如 /ping abc123", nil)
+		} else {
+			a.runTGAction(s, chat, arg, cmd)
+		}
+	case "changeip", "reboot":
+		if arg == "" {
+			a.tgSend(s.BotToken, chat, "请提供 VPS ID", nil)
+		} else {
+			a.tgConfirm(s, chat, arg, cmd)
+		}
+	default:
+		a.tgSend(s.BotToken, chat, "未知命令，发送 /help 查看帮助", nil)
+	}
+}
+func (a *App) tgVPSList() string {
+	rows, e := a.db.Query(`SELECT id,name,ipv4 FROM vps ORDER BY name`)
+	if e != nil {
+		return "读取失败"
+	}
+	defer rows.Close()
+	var b strings.Builder
+	b.WriteString("VPS 列表\n")
+	for rows.Next() {
+		var id, n, ip string
+		rows.Scan(&id, &n, &ip)
+		fmt.Fprintf(&b, "\n%s\nID: %s\nIP: %s\n", n, id, ip)
+	}
+	return b.String()
+}
+func (a *App) tgStatus(id string) string {
+	query := `SELECT id,name,ipv4,day_bytes,month_bytes,total_bytes FROM vps`
+	args := []any{}
+	if id != "" {
+		query += ` WHERE id=?`
+		args = append(args, id)
+	}
+	rows, e := a.db.Query(query, args...)
+	if e != nil {
+		return "读取失败"
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var vid, n, ip string
+		var d, m, t uint64
+		rows.Scan(&vid, &n, &ip, &d, &m, &t)
+		a.mu.RLock()
+		metric, ok := a.live[vid]
+		a.mu.RUnlock()
+		fmt.Fprintf(&b, "%s [%s]\n%s\n在线: %t | CPU %.1f%% | 内存 %.1f%% | 磁盘 %.1f%%\n速度 ↓%.1f ↑%.1f KB/s\n流量 今日 %.2fGB | 本月 %.2fGB | 累计 %.2fGB\n\n", n, vid, ip, ok && time.Since(metric.At) < 15*time.Second, metric.CPU, metric.Memory, metric.Disk, float64(metric.RxBPS)/1024, float64(metric.TxBPS)/1024, float64(d)/1073741824, float64(m)/1073741824, float64(t)/1073741824)
+	}
+	if b.Len() == 0 {
+		return "未找到 VPS"
+	}
+	return b.String()
+}
+func (a *App) tgLogs(id string) string {
+	q := `SELECT at,type,detail FROM events`
+	args := []any{}
+	if id != "" {
+		q += ` WHERE vps_id=?`
+		args = append(args, id)
+	}
+	q += ` ORDER BY id DESC LIMIT 10`
+	rows, e := a.db.Query(q, args...)
+	if e != nil {
+		return "读取失败"
+	}
+	defer rows.Close()
+	var b strings.Builder
+	b.WriteString("最近日志\n")
+	for rows.Next() {
+		var at time.Time
+		var typ, detail string
+		rows.Scan(&at, &typ, &detail)
+		fmt.Fprintf(&b, "\n%s %s\n%s\n", at.Format("01-02 15:04:05"), typ, detail)
+	}
+	return b.String()
+}
+func (a *App) tgConfirm(s telegramSettings, chat int64, id, action string) {
+	name := action
+	if action == "changeip" {
+		name = "换 IP"
+	} else if action == "reboot" {
+		name = "重启"
+	}
+	markup := map[string]any{"inline_keyboard": [][]map[string]string{{{"text": "确认执行", "callback_data": "confirm:" + action + ":" + id}, {"text": "取消", "callback_data": "cancel"}}}}
+	a.tgSend(s.BotToken, chat, fmt.Sprintf("确认对 VPS %s 执行%s？", id, name), markup)
+}
+func (a *App) runTGAction(s telegramSettings, chat int64, id, action string) {
+	a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`, id, time.Now(), "telegram_action", "Telegram 请求执行: "+action)
+	if action == "dns" {
+		if e := a.updateCloudflareDNS(id); e != nil {
+			a.tgSend(s.BotToken, chat, "DNS 更新失败: "+e.Error(), nil)
+		} else {
+			a.tgSend(s.BotToken, chat, "DNS 更新成功", nil)
+		}
+		return
+	}
+	a.mu.RLock()
+	c := a.agents[id]
+	a.mu.RUnlock()
+	if c == nil {
+		a.tgSend(s.BotToken, chat, "执行失败：Agent 离线或 VPS ID 不存在", nil)
+		return
+	}
+	if e := c.WriteJSON(map[string]string{"type": "action", "action": action}); e != nil {
+		a.tgSend(s.BotToken, chat, "发送失败: "+e.Error(), nil)
+		return
+	}
+	a.tgSend(s.BotToken, chat, "指令已发送，执行结果会通过通知和日志返回", nil)
+}
+func (a *App) tgSend(token string, chat int64, text string, markup any) {
+	payload := map[string]any{"chat_id": chat, "text": text}
+	if markup != nil {
+		payload["reply_markup"] = markup
+	}
+	tgCall(token, "sendMessage", payload)
+}
+func (a *App) answerCallback(token, id string) {
+	tgCall(token, "answerCallbackQuery", map[string]any{"callback_query_id": id})
+}
+func tgCall(token, method string, payload any) error {
+	b, _ := json.Marshal(payload)
+	resp, e := http.Post("https://api.telegram.org/bot"+token+"/"+method, "application/json", bytes.NewReader(b))
+	if e != nil {
+		return e
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("%s", resp.Status)
+	}
+	return nil
+}
+func tgSetCommands(token string) error {
+	commands := []map[string]string{{"command": "status", "description": "查看 VPS 状态"}, {"command": "vps", "description": "查看 VPS 列表"}, {"command": "ping", "description": "立即 Ping"}, {"command": "changeip", "description": "手动换 IP"}, {"command": "dns", "description": "更新 DNS"}, {"command": "reboot", "description": "重启 VPS"}, {"command": "logs", "description": "最近日志"}, {"command": "alerts", "description": "通知状态"}, {"command": "help", "description": "帮助"}}
+	return tgCall(token, "setMyCommands", map[string]any{"commands": commands})
+}
