@@ -15,7 +15,8 @@
     change_ip_started:'开始换 IP',change_ip_command_ok:'换 IP 命令成功',change_ip_failed:'换 IP 失败',change_ip_skipped:'换 IP 已跳过',
     ip_check:'检测新 IP',ip_detected:'发现新 IP',ip_changed:'IP 已变化',
     dns_updated:'DNS 更新成功',dns_failed:'DNS 更新失败',
-    auto_recovery_config:'自动恢复设置',settings_updated:'服务器设置已保存',reboot:'重启 VPS'
+    auto_recovery_config:'自动恢复设置',settings_updated:'服务器设置已保存',reboot:'重启 VPS',
+    failover_settings:'容灾设置',failover_activated:'容灾已切换',failover_recovered:'主节点已恢复',failover_failed:'容灾失败',failover_recheck:'复检主节点',failover_recheck_failed:'主节点复检失败',failover_backup_check:'检测备用节点',failover_backup_ready:'备用节点可用'
   };
   const safe = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
