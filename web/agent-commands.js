@@ -3,12 +3,12 @@
   api = async function (url, options = {}) {
     const result = await originalApi(url, options);
     if (url === '/api/vps' && options.method === 'POST' && result?.vps?.id && result?.install) {
-      localStorage.setItem(`vpspulse:install:${result.vps.id}`, result.install);
+      sessionStorage.setItem(`vpspulse:install:${result.vps.id}`, result.install);
     }
     return result;
   };
 
-  const uninstallCommand = "sudo systemctl disable --now vps-pulse-agent 2>/dev/null || true; sudo rm -f /etc/systemd/system/vps-pulse-agent.service /usr/local/bin/vps-pulse-agent; sudo systemctl daemon-reload; echo 'VPS Pulse Agent 已卸载'";
+  const uninstallCommand = "sudo systemctl disable --now vps-pulse-agent 2>/dev/null || true; sudo rm -f /etc/systemd/system/vps-pulse-agent.service /usr/local/bin/vps-pulse-agent /etc/vps-pulse-agent.token; sudo systemctl daemon-reload; echo 'VPS Pulse Agent 已卸载'";
 
   async function copy(text, button) {
     if (!text) {
@@ -41,7 +41,7 @@
       install.type = 'button';
       install.className = 'ghost agent-install';
       install.textContent = '复制安装 Agent';
-      install.onclick = () => copy(localStorage.getItem(`vpspulse:install:${id}`), install);
+      install.onclick = () => copy(sessionStorage.getItem(`vpspulse:install:${id}`), install);
 
       const uninstall = document.createElement('button');
       uninstall.type = 'button';
@@ -58,7 +58,7 @@
         if (!confirm('确定从面板删除这台 VPS 吗？\n\n此操作会删除它的流量统计和事件记录，但不会卸载远端 Agent。建议先复制并执行卸载命令。')) return;
         try {
           await api(`/api/vps/${id}`, { method: 'DELETE' });
-          localStorage.removeItem(`vpspulse:install:${id}`);
+          sessionStorage.removeItem(`vpspulse:install:${id}`);
           data = await api('/api/vps');
           render();
         } catch (error) {
