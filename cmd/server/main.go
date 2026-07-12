@@ -25,6 +25,7 @@ func(a *App)login(w http.ResponseWriter,r *http.Request){var x struct{Password s
 func(a *App)auth(n http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){c,e:=r.Cookie("session");if e!=nil||c.Value!=a.password{http.Error(w,"unauthorized",401);return};n(w,r)}}
 func(a *App)vps(w http.ResponseWriter,r *http.Request){
 	a.startTelegramBot()
+	a.startFailoverController()
 	_,_=a.db.Exec(`ALTER TABLE vps ADD COLUMN auto_recovery INTEGER DEFAULT 0`)
 	if r.Method=="POST"{
 		var v VPS;json.NewDecoder(r.Body).Decode(&v);v.ID=tok(6);v.Token=tok(24);if v.BillingDay==0{v.BillingDay=1}
@@ -41,6 +42,7 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 	id:=p[0]
 	if id==""{http.Error(w,"缺少 VPS ID",400);return}
 	if id=="telegram"{a.telegramSettings(w,r);return}
+	if id=="failover"{a.failoverAPI(w,r,p[1:]);return}
 	if id=="logs"{
 		if r.Method=="DELETE"{if _,e:=a.db.Exec(`DELETE FROM events`);e!=nil{http.Error(w,e.Error(),500);return};w.WriteHeader(http.StatusNoContent);return}
 		if r.Method!="GET"{http.Error(w,"method",405);return}
@@ -82,6 +84,7 @@ func(a *App)one(w http.ResponseWriter,r *http.Request){
 	a.mu.RLock();c:=a.agents[id];a.mu.RUnlock();if c!=nil{c.WriteJSON(map[string]any{"type":"config","pingTarget":v.PingTarget,"changeIpCommand":v.ChangeIPCommand,"autoRecovery":v.AutoRecovery})};write(w,map[string]bool{"ok":true})
 }
 func(a *App)agent(w http.ResponseWriter,r *http.Request){
+	a.startFailoverController()
 	_,_=a.db.Exec(`ALTER TABLE vps ADD COLUMN auto_recovery INTEGER DEFAULT 0`)
 	var id string;var bill int;var ping,cmd string;var autoRecovery bool
 	e:=a.db.QueryRow(`SELECT id,billing_day,ping_target,change_cmd,auto_recovery FROM vps WHERE token=?`,r.URL.Query().Get("token")).Scan(&id,&bill,&ping,&cmd,&autoRecovery);if e!=nil{http.Error(w,"token",401);return}
@@ -98,6 +101,7 @@ func(a *App)agent(w http.ResponseWriter,r *http.Request){
 			for v:=range a.views{v.WriteJSON(map[string]any{"type":"metric","vpsId":id,"metric":x.Metric})};a.mu.Unlock();continue
 		}
 		a.db.Exec(`INSERT INTO events(vps_id,at,type,detail) VALUES(?,?,?,?)`,id,time.Now(),x.Event,x.Detail)
+		a.handleFailoverAgentEvent(id,x.Event)
 		kind:="resource";if strings.Contains(x.Event,"ping"){kind="ping"}else if strings.Contains(x.Event,"ip_")||strings.Contains(x.Event,"change_ip"){kind="ip"}else if strings.Contains(x.Event,"dns"){kind="dns"}else if strings.Contains(x.Event,"agent_"){kind="agent"}
 		var vpsName string;_ = a.db.QueryRow(`SELECT name FROM vps WHERE id=?`,id).Scan(&vpsName);a.telegramNotify(kind,"["+vpsName+"] "+x.Detail)
 		if x.Event=="ip_changed"&&x.IPv4!=""{
