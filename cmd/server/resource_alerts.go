@@ -32,30 +32,39 @@ func (a *App) evaluateResourceAlerts() {
 	if e != nil {
 		return
 	}
-	defer rows.Close()
+	type resourceTarget struct {
+		id, name          string
+		cpu, memory, disk float64
+		duration          int
+		maintenanceUntil  *time.Time
+	}
+	targets := make([]resourceTarget, 0)
 	for rows.Next() {
-		var id, name string
-		var cpuT, memT, diskT float64
-		var duration int
-		var until *time.Time
-		if rows.Scan(&id, &name, &cpuT, &memT, &diskT, &duration, &until) != nil {
-			continue
+		var target resourceTarget
+		if rows.Scan(&target.id, &target.name, &target.cpu, &target.memory, &target.disk, &target.duration, &target.maintenanceUntil) == nil {
+			targets = append(targets, target)
 		}
-		if maintenanceActive(until) {
+	}
+	// SQLite is intentionally configured with one connection. Close the result
+	// set before evaluateOneResource performs further queries, otherwise the
+	// background alert loop can hold the only connection forever and block login.
+	_ = rows.Close()
+	for _, target := range targets {
+		if maintenanceActive(target.maintenanceUntil) {
 			continue
 		}
 		a.mu.RLock()
-		m, ok := a.live[id]
+		m, ok := a.live[target.id]
 		a.mu.RUnlock()
 		if !ok || time.Since(m.At) > 15*time.Second {
 			continue
 		}
-		if duration < 30 {
-			duration = 30
+		if target.duration < 30 {
+			target.duration = 30
 		}
-		a.evaluateOneResource(id, name, "CPU", m.CPU, cpuT, duration)
-		a.evaluateOneResource(id, name, "内存", m.Memory, memT, duration)
-		a.evaluateOneResource(id, name, "磁盘", m.Disk, diskT, duration)
+		a.evaluateOneResource(target.id, target.name, "CPU", m.CPU, target.cpu, target.duration)
+		a.evaluateOneResource(target.id, target.name, "内存", m.Memory, target.memory, target.duration)
+		a.evaluateOneResource(target.id, target.name, "磁盘", m.Disk, target.disk, target.duration)
 	}
 }
 func (a *App) evaluateOneResource(id, name, metric string, value, threshold float64, duration int) {
